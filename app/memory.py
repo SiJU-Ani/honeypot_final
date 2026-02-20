@@ -10,6 +10,7 @@ def get_session(session_id):
                 "upiIds": [],
                 "phishingLinks": [],
                 "phoneNumbers": [],
+                "emailAddresses": [],
                 "suspiciousKeywords": []
             },
             "scamDetected": False
