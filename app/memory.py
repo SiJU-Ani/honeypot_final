@@ -1,6 +1,4 @@
 
-import time
-
 SESSION_STORE = {}
 
 def get_session(session_id):
@@ -14,8 +12,6 @@ def get_session(session_id):
                 "phoneNumbers": [],
                 "suspiciousKeywords": []
             },
-            "scamDetected": False,
-            "startTime": time.time(),  # Track conversation start
-            "callbackSent": False  # Track if callback has been sent
+            "scamDetected": False
         }
     return SESSION_STORE[session_id]
