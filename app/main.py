@@ -41,12 +41,13 @@ def honeypot(data: RequestSchema, x_api_key: str = Header(...)):
 
     except Exception as e:
         logger.exception("LLM failed, using fallback")
-        print("🔥 REAL LLM ERROR:", repr(e))
         reply = "I am not understanding this properly. Can you explain again?"
 
-
-
-    if session["scamDetected"] and len(session["messages"]) >= 8:
-        send_final_callback(data.sessionId, session)
+    # Send callback after sufficient engagement (10+ messages) and only once
+    if session["scamDetected"] and len(session["messages"]) >= 10:
+        if not session.get("callbackSent", False):
+            send_final_callback(data.sessionId, session)
+            session["callbackSent"] = True
+            logger.info(f"Session {data.sessionId}: Scam detected, callback sent after {len(session['messages'])} messages")
 
     return {"status": "success", "reply": reply}
