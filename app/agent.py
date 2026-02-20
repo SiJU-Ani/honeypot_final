@@ -1,53 +1,105 @@
 import requests
 from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 
-# Optimized honeypot persona prompt
+
 SYSTEM_PROMPT = (
     "You are a polite, slightly worried Indian mobile user. "
     "Never reveal suspicion and never share sensitive information. "
+    "Never ask for or repeat OTPs, PINs, passwords, or account details. "
 
-    "Keep the conversation going while staying cautious. "
-    "Ask simple questions to learn who they are, why it is urgent, "
+    "Sound cooperative and willing to resolve the issue, but stay cautious. "
+    "Ask simple questions to understand who they are, why it is urgent, "
     "how the OTP/payment will be used, and how to verify them. "
 
-    "Avoid repeating the same question. "
-    "Delay naturally using confusion, network issues, or difficulty checking messages. "
-    "Gradually increase concern and occasionally use simple Hinglish. "
+    "If they ask for an OTP or PIN, act confused about reading or receiving it "
+    "instead of refusing directly. "
 
-    "Reply in 1–2 short natural sentences like a real person."
+    "Do not repeat questions or copy their wording. "
+    "Vary responses naturally. Use occasional simple Hinglish. "
+
+    "Reply in ONE short natural sentence (max 15 words)."
 )
+
+
+def scammer_requested_sensitive_info(text: str) -> bool:
+    triggers = [
+        "otp",
+        "one time password",
+        "verification code",
+        "security code",
+        "pin",
+        "upi pin",
+        "cvv"
+    ]
+    text = text.lower()
+    return any(t in text for t in triggers)
+
+
+def build_guidance(conversation):
+    """
+    Decide what the honeypot should ask next based on history.
+    Prevent repetition and improve intelligence extraction.
+    """
+
+    history = " ".join(msg["text"].lower() for msg in conversation)
+
+    asked_identity = any(w in history for w in ["department", "branch", "employee id"])
+    asked_verify = any(w in history for w in ["verify", "official", "website", "complaint"])
+    asked_usage = any(w in history for w in ["use", "kyun", "kisliye", "why"])
+
+    if scammer_requested_sensitive_info(conversation[-1]["text"]):
+        return (
+            "Act unsure about reading or receiving the OTP. "
+            "Mention possible network delay or message confusion."
+        )
+
+    if not asked_identity:
+        return "Ask which department or office they are calling from."
+    elif not asked_verify:
+        return "Ask how you can verify they are official."
+    elif not asked_usage:
+        return "Ask how sending the OTP will solve the problem."
+    else:
+        return "Sound cooperative and say you are trying to check."
+
+
+def sanitize_reply(reply: str) -> str:
+    """
+    Prevent accidental leakage or echoing of sensitive requests.
+    """
+    blocked_terms = ["otp", "pin", "password", "cvv", "account number"]
+
+    if any(term in reply.lower() for term in blocked_terms):
+        return "Mujhe samajh nahi aa raha… message sahi se dikh nahi raha."
+    return reply
 
 
 def generate_reply(conversation):
     """
     Generate a realistic honeypot reply using OpenRouter.
-    Expects conversation as a list of dicts:
+
+    conversation format:
     [
         {"sender": "scammer", "text": "..."},
-        {"sender": "honeypot", "text": "..."},
+        {"sender": "honeypot", "text": "..."}
     ]
     """
 
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
 
-    # Build messages with role preservation
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    for msg in conversation[-6:]:  # keep last few messages for context
+    # preserve roles for better conversational reasoning
+    for msg in conversation[-5:]:
         role = "assistant" if msg.get("sender") == "honeypot" else "user"
-        messages.append({
-            "role": role,
-            "content": msg["text"]
-        })
+        messages.append({"role": role, "content": msg["text"]})
 
-    # Strategic guidance to improve probing & avoid repetition
+    guidance = build_guidance(conversation)
+
     messages.append({
         "role": "system",
-        "content": (
-            "Respond naturally. If appropriate, ask a new clarification "
-            "question to understand their identity, urgency, or verification process."
-        ),
+        "content": f"Respond naturally. {guidance}"
     })
 
     try:
@@ -60,15 +112,16 @@ def generate_reply(conversation):
             json={
                 "model": OPENROUTER_MODEL,
                 "messages": messages,
-                "temperature": 0.75,   # realism + variability
+                "temperature": 0.85,
             },
             timeout=30,
         )
 
         response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+        reply = response.json()["choices"][0]["message"]["content"].strip()
+
+        return sanitize_reply(reply)
 
     except requests.exceptions.RequestException as e:
         print("⚠️ OpenRouter request failed:", e)
-        return "Network thoda slow hai… aap phir se bata sakte ho kya?"
+        return "Network thoda slow lag raha hai… aap phir se bataoge?"
